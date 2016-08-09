@@ -1,6 +1,6 @@
 // This file is part of BOINC.
 // http://boinc.berkeley.edu
-// Copyright (C) 2008 University of California
+// Copyright (C) 2016 University of California
 //
 // BOINC is free software; you can redistribute it and/or modify it
 // under the terms of the GNU Lesser General Public License
@@ -126,12 +126,13 @@ void add_job_files_to_host(WORKUNIT& wu) {
 const double MIN_REQ_SECS = 0;
 const double MAX_REQ_SECS = (28*SECONDS_IN_DAY);
 
+// compute effective_ncpus;
 // get limits on:
 // # jobs per day
 // # jobs per RPC
 // # jobs in progress
 //
-void WORK_REQ_BASE::get_job_limits() {
+void WORK_REQ::get_job_limits() {
     int ninstances[NPROC_TYPES];
     int i;
     
@@ -144,6 +145,11 @@ void WORK_REQ_BASE::get_job_limits() {
     if (n > config.max_ncpus) n = config.max_ncpus;
     if (n < 1) n = 1;
     if (n > MAX_CPUS) n = MAX_CPUS;
+    if (project_prefs.max_cpus) {
+        if (n > project_prefs.max_cpus) {
+            n = project_prefs.max_cpus;
+        }
+    }
     ninstances[PROC_TYPE_CPU] = n;
     effective_ncpus = n;
 
@@ -165,7 +171,10 @@ void WORK_REQ_BASE::get_job_limits() {
         if (effective_ngpus) effective_ngpus = 1;
     }
 
-    if (config.max_wus_to_send) {
+    if (project_prefs.max_jobs){
+      g_wreq->max_jobs_per_rpc = project_prefs.max_jobs;
+      ninstances[PROC_TYPE_CPU] = project_prefs.max_jobs;
+    } else if (config.max_wus_to_send) {
         g_wreq->max_jobs_per_rpc = mult * config.max_wus_to_send;
     } else {
         g_wreq->max_jobs_per_rpc = 999999;
@@ -768,7 +777,18 @@ bool work_needed(bool locality_sched) {
 
     for (int i=0; i<NPROC_TYPES; i++) {
         if (!have_apps(i)) continue;
-        if (config.max_jobs_in_progress.exceeded(NULL, i)) {
+
+        // enforce project prefs limit on # of jobs in progress
+        //
+        bool proj_pref_exceeded = false;
+        int mj = g_wreq->project_prefs.max_jobs;
+        if (mj) {
+            if (config.max_jobs_in_progress.project_limits.total.njobs >= mj) {
+                proj_pref_exceeded = true;
+            }
+        }
+
+        if (proj_pref_exceeded || config.max_jobs_in_progress.exceeded(NULL, i)) {
             if (config.debug_quota) {
                 log_messages.printf(MSG_NORMAL,
                     "[quota] reached limit on %s jobs in progress\n",
